@@ -1,11 +1,16 @@
 const VideoSDK = window.WebVideoSDK.default
-
+// Video_90P=0, 180P=1, 360P=2, 720P=3 (720p is the max a web client can render)
+const VideoQuality = window.WebVideoSDK.VideoQuality || { Video_360P: 2, Video_720P: 3 }
+ 
 let zmClient = VideoSDK.createClient()
 let zmStream
+let recordingClient
 let audioDecode
 let audioEncode
-
-// setup your signature endpoint here: https://github.com/zoom/videosdk-sample-signature-node.js
+ 
+// IMPORTANT: point this at YOUR OWN deployment of https://github.com/zoom/videosdk-sample-signature-node.js
+// Recording is billed to and stored in the Video SDK account that owns the SDK key used to sign the JWT.
+// Zoom's public demo endpoint below signs with Zoom's key, so recording won't work / won't land in your account.
 let signatureEndpoint = 'https://videosdk-auth-2.vercel.app/'
 let sessionName = ''
 let sessionPasscode = ''
@@ -13,218 +18,538 @@ let userName = 'Participant' + Math.floor(Math.random() * 100)
 let role = 1
 let userIdentity
 let sessionKey
-
-zmClient.init('US-en', 'CDN')
-
+ 
+// Users whose video is currently attached, so we never attach twice or detach something that isn't there
+const attached = new Set()
+// Serialize attach/detach per user so a fast Start -> Stop -> Start can't run out of order
+const pending = new Map()
+ 
+const selfContainer = () => document.querySelector('#self-view-container')
+const participantContainer = () => document.querySelector('#participant-container')
+ 
+// enforceMultipleVideos: lets the WebAssembly renderer show more than one video without
+// SharedArrayBuffer (GitHub Pages can't send COOP/COEP headers, and the old origin-trial token expired in March 2024)
+zmClient.init('en-US', 'Global', {
+  patchJsMedia: true,
+  enforceMultipleVideos: true,
+  leaveOnPageUnload: true
+})
+ 
 function getSignature() {
-
   document.querySelector('#getSignature').textContent = 'Joining Session...'
   document.querySelector('#getSignature').disabled = true
   document.querySelector('#error').style.display = 'none'
-
+ 
   fetch(signatureEndpoint, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json'
-    },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       sessionName: document.getElementById('sessionName').value || sessionName,
-      role: role,
+      role: parseInt(document.getElementById('role').value, 10), // 1 = host, 0 = participant (must be a number)
       userIdentity: userIdentity,
-      sessionKey: sessionKey
+      sessionKey: sessionKey,
+      cloudRecordingOption: 1,   // 1 = separate video file per user (plus the combined recording)
+      cloudRecordingElection: 1  // 1 = record this user's own video individually
     })
-  }).then((response) => {
-    return response.json()
-  }).then((data) => {
-    joinSession(data.signature)
-  }).catch((error) => {
-  	console.log(error)
-  })
+  }).then((response) => response.json())
+    .then((data) => {
+      if (!data.signature) throw new Error('Signature endpoint error: ' + JSON.stringify(data))
+      logTokenRecordingFields(data.signature)
+      joinSession(data.signature)
+    })
+    .catch((error) => {
+      console.log(error)
+      resetJoinButton()
+    })
 }
-
+ 
+// Prints the recording-related claims actually inside the JWT, so you can confirm
+// the signature endpoint is really setting them (per-user recording needs both = 1,
+// and cloud_recording_option only takes effect on the HOST's token, role_type 1)
+function logTokenRecordingFields(signature) {
+  try {
+    const part = signature.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')
+    const payload = JSON.parse(atob(part + '='.repeat((4 - part.length % 4) % 4)))
+    console.table({
+      role_type: payload.role_type,
+      cloud_recording_option: payload.cloud_recording_option,
+      cloud_recording_election: payload.cloud_recording_election
+    })
+    if (payload.cloud_recording_option !== 1 || payload.cloud_recording_election !== 1) {
+      console.warn('Token is missing cloud_recording_option: 1 and/or cloud_recording_election: 1 — redeploy the signature endpoint')
+    }
+  } catch (e) {
+    console.log('Could not decode token', e)
+  }
+}
+ 
+function resetJoinButton() {
+  document.querySelector('#getSignature').textContent = 'Join Session'
+  document.querySelector('#getSignature').disabled = false
+}
+ 
 function joinSession(signature) {
-  zmClient.join(document.getElementById('sessionName').value || sessionName, signature, document.getElementById('userName').value || userName, document.getElementById('sessionPasscode').value || sessionPasscode).then((data) => {
-
+  zmClient.join(
+    document.getElementById('sessionName').value || sessionName,
+    signature,
+    document.getElementById('userName').value || userName,
+    document.getElementById('sessionPasscode').value || sessionPasscode
+  ).then(() => {
     zmStream = zmClient.getMediaStream()
-
     console.log(zmClient.getSessionInfo())
-
-    if(zmClient.getAllUser().length > 4) {
+ 
+    if (zmClient.getAllUser().length > 4) {
       document.querySelector('#error').style.display = 'block'
-      setTimeout(() => {
-        leaveSession()
-      }, 1000)
-    } else {
-      document.querySelector('#session').style.display = 'flex'
-      document.querySelector('#landing').style.display = 'none'
+      setTimeout(() => { zmClient.leave(); resetToLanding('Session full, join another.') }, 1000)
+      return
+    }
+ 
+    document.querySelector('#session').style.display = 'flex'
+    document.querySelector('#landing').style.display = 'none'
+ 
+    // Render anyone who already had video on before we joined
+    renderExistingVideos()
+ 
+    recordingClient = zmClient.getRecordingClient()
+    updateRecordingUI()
+    updateHostUI()
+    const diag = recordingDiagnostics()
+    if (diag.isHost && diag.canStartRecording === false) {
+      toast('Cloud recording is not enabled for the Video SDK account that signed this session.')
     }
   }).catch((error) => {
     console.log(error)
+    resetJoinButton()
   })
 }
-
+ 
+function peerQuality() {
+  // Ask for 720p only when this browser can actually handle it; otherwise 360p keeps video smooth
+  return zmStream && zmStream.isSupportHDVideo && zmStream.isSupportHDVideo()
+    ? VideoQuality.Video_720P
+    : VideoQuality.Video_360P
+}
+ 
+function queue(userId, task) {
+  const prev = pending.get(userId) || Promise.resolve()
+  const next = prev.then(task, task).catch((error) => console.log('video render error', userId, error))
+  pending.set(userId, next)
+  return next
+}
+ 
+function attachUser(userId, container, quality) {
+  return queue(userId, async () => {
+    if (!zmStream || attached.has(userId)) return
+    const element = await zmStream.attachVideo(userId, quality)
+    container.appendChild(element)
+    attached.add(userId)
+  })
+}
+ 
+function detachUser(userId) {
+  return queue(userId, async () => {
+    if (!zmStream || !attached.has(userId)) return
+    const elements = await zmStream.detachVideo(userId)
+    ;(Array.isArray(elements) ? elements : [elements]).forEach((el) => el && el.remove())
+    attached.delete(userId)
+  })
+}
+ 
+function showParticipant(on) {
+  participantContainer().style.display = on ? 'block' : 'none'
+  document.querySelector('#participant-name').style.display = on ? 'none' : 'block'
+}
+ 
+function renderExistingVideos() {
+  const selfId = zmClient.getCurrentUserInfo().userId
+  zmClient.getAllUser().forEach((user) => {
+    if (user.userId !== selfId && user.bVideoOn) {
+      attachUser(user.userId, participantContainer(), peerQuality()).then(() => showParticipant(true))
+    }
+  })
+}
+ 
 function startVideo() {
   document.querySelector('#startVideo').textContent = 'Starting Video...'
   document.querySelector('#startVideo').disabled = true
-
-  if(zmStream.isRenderSelfViewWithVideoElement()) {
-    zmStream.startVideo({ videoElement: document.querySelector('#self-view-video'), mirrored: true, hd: true }).then(() => {
-      document.querySelector('#self-view-video').style.display = 'block'
+ 
+  const hd = zmStream.isSupportHDVideo ? zmStream.isSupportHDVideo() : false
+ 
+  zmStream.startVideo({ mirrored: true, hd: hd })
+    .then(() => attachUser(zmClient.getCurrentUserInfo().userId, selfContainer(), hd ? VideoQuality.Video_720P : VideoQuality.Video_360P))
+    .then(() => {
       document.querySelector('#self-view-name').style.display = 'none'
-
       document.querySelector('#startVideo').style.display = 'none'
       document.querySelector('#stopVideo').style.display = 'inline-block'
-
+    })
+    .catch((error) => console.log(error))
+    .finally(() => {
       document.querySelector('#startVideo').textContent = 'Start Video'
       document.querySelector('#startVideo').disabled = false
-    }).catch((error) => {
-      console.log(error)
     })
-  } else {
-    zmStream.startVideo({ mirrored: true,  hd: true }).then(() => {
-      zmStream.renderVideo(document.querySelector('#self-view-canvas'), zmClient.getCurrentUserInfo().userId, 1920, 1080, 0, 0, 3).then(() => {
-        document.querySelector('#self-view-canvas').style.display = 'block'
-        document.querySelector('#self-view-name').style.display = 'none'
-
-        document.querySelector('#startVideo').style.display = 'none'
-        document.querySelector('#stopVideo').style.display = 'inline-block'
-
-        document.querySelector('#startVideo').textContent = 'Start Video'
-        document.querySelector('#startVideo').disabled = false
-      }).catch((error) => {
-        console.log(error)
-      })
-    }).catch((error) => {
-      console.log(error)
-    })
-  }
 }
-
+ 
 function stopVideo() {
+  const selfId = zmClient.getCurrentUserInfo().userId
   zmStream.stopVideo()
-  document.querySelector('#self-view-canvas').style.display = 'none'
-
-  document.querySelector('#self-view-video').style.display = 'none'
+    .then(() => detachUser(selfId))
+    .catch((error) => console.log(error))
+ 
   document.querySelector('#self-view-name').style.display = 'block'
-
   document.querySelector('#startVideo').style.display = 'inline-block'
   document.querySelector('#stopVideo').style.display = 'none'
 }
-
+ 
 function startAudio() {
-
   var isSafari = window.safari !== undefined
-
-  if(isSafari) {
-    console.log('desktop safari')
-    if(audioDecode && audioEncode){
-      zmStream.startAudio()
-      document.querySelector('#startAudio').style.display = 'none'
-      document.querySelector('#muteAudio').style.display = 'inline-block'
-    } else {
-      console.log('desktop safari audio init has not finished')
-    }
-  } else {
-    console.log('not desktop safari')
-    zmStream.startAudio()
-    document.querySelector('#startAudio').style.display = 'none'
-    document.querySelector('#muteAudio').style.display = 'inline-block'
+ 
+  if (isSafari && !(audioDecode && audioEncode)) {
+    console.log('desktop safari audio init has not finished')
+    return
   }
+  zmStream.startAudio()
+  document.querySelector('#startAudio').style.display = 'none'
+  document.querySelector('#muteAudio').style.display = 'inline-block'
 }
-
+ 
 function muteAudio() {
   zmStream.muteAudio()
-
   document.querySelector('#muteAudio').style.display = 'none'
   document.querySelector('#unmuteAudio').style.display = 'inline-block'
 }
-
+ 
 function unmuteAudio() {
   zmStream.unmuteAudio()
-
   document.querySelector('#muteAudio').style.display = 'inline-block'
   document.querySelector('#unmuteAudio').style.display = 'none'
 }
-
+ 
+// ---------- Cloud recording ----------
+// Only the host or a manager can control recording, and the Video SDK account that owns
+// the SDK key must have cloud recording enabled (Cloud Recording Storage Plan).
+ 
+function isHostOrManager() {
+  return !!(zmClient.isHost && zmClient.isHost()) || !!(zmClient.isManager && zmClient.isManager())
+}
+ 
+function canControlRecording() {
+  return !!recordingClient && isHostOrManager() && recordingClient.canStartRecording()
+}
+ 
+// Call recordingDiagnostics() in the browser console to see why recording is or isn't available
+function recordingDiagnostics() {
+  const info = {
+    signatureEndpoint: signatureEndpoint,
+    isHost: !!(zmClient.isHost && zmClient.isHost()),
+    isManager: !!(zmClient.isManager && zmClient.isManager()),
+    canStartRecording: recordingClient ? recordingClient.canStartRecording() : 'no recording client',
+    cloudRecordingStatus: recordingClient ? recordingClient.getCloudRecordingStatus() : 'no recording client',
+    sessionInfo: zmClient.getSessionInfo()
+  }
+  console.table(info)
+  return info
+}
+window.recordingDiagnostics = recordingDiagnostics
+ 
+function toast(message, type) {
+  const el = document.querySelector('#toast')
+  el.textContent = message
+  el.className = type || ''
+  el.style.display = 'block'
+  clearTimeout(toast.timer)
+  toast.timer = setTimeout(() => { el.style.display = 'none' }, 7000)
+}
+ 
+function setDisplay(id, show) {
+  document.querySelector(id).style.display = show ? 'inline-block' : 'none'
+}
+ 
+function updateRecordingUI(state) {
+  state = state || (recordingClient ? recordingClient.getCloudRecordingStatus() : 'Stopped')
+  const isRecording = state === 'Recording'
+  const isPaused = state === 'Paused'
+  const controls = canControlRecording()
+ 
+  setDisplay('#startRecording', controls && !isRecording && !isPaused)
+  setDisplay('#pauseRecording', controls && isRecording)
+  setDisplay('#resumeRecording', controls && isPaused)
+  setDisplay('#stopRecording', controls && (isRecording || isPaused))
+ 
+  // Everyone (not just the host) sees the notice while recording is on
+  const indicator = document.querySelector('#recording-indicator')
+  indicator.style.display = isRecording || isPaused ? 'flex' : 'none'
+  indicator.classList.toggle('paused', isPaused)
+  document.querySelector('#recording-label').textContent = isPaused ? 'PAUSED' : 'REC'
+}
+ 
+function recordingAction(buttonId, busyText, action) {
+  const button = document.querySelector(buttonId)
+  const original = button.textContent
+  button.textContent = busyText
+  button.disabled = true
+  Promise.resolve()
+    .then(() => {
+      if (!recordingClient) throw new Error('Not in a session')
+      if (!isHostOrManager()) throw new Error('Only the host or a manager can control recording')
+      return action()
+    })
+    .then((result) => {
+      // These methods resolve with an Error object instead of rejecting in some cases
+      if (result instanceof Error) throw result
+    })
+    .catch((error) => {
+      console.log('recording error', error)
+      alertRecordingError(error)
+    })
+    .finally(() => {
+      button.textContent = original
+      button.disabled = false
+      updateRecordingUI()
+    })
+}
+ 
+function alertRecordingError(error) {
+  const reason = (error && (error.reason || error.message || error.type || JSON.stringify(error))) || 'Unknown error'
+  toast('Recording failed: ' + reason)
+}
+ 
+function startRecording() {
+  recordingAction('#startRecording', 'Starting...', () => recordingClient.startCloudRecording())
+}
+ 
+function pauseRecording() {
+  recordingAction('#pauseRecording', 'Pausing...', () => recordingClient.pauseCloudRecording())
+}
+ 
+function resumeRecording() {
+  recordingAction('#resumeRecording', 'Resuming...', () => recordingClient.resumeCloudRecording())
+}
+ 
+function stopRecording() {
+  recordingAction('#stopRecording', 'Stopping...', () => recordingClient.stopCloudRecording())
+}
+ 
+// Individual (per-user) recording consent.
+// When the host starts per-user recording, the SDK sends state 'Ask' to participants,
+// who must accept or decline. The prompt is built here so no HTML changes are needed.
+function showConsentPrompt() {
+  if (document.querySelector('#recording-consent')) return
+  const bar = document.createElement('div')
+  bar.id = 'recording-consent'
+  bar.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:30;' +
+    'max-width:90vw;padding:20px 24px;border-radius:20px;background:#ffffff;color:#073B4C;' +
+    'box-shadow:0 10px 30px rgba(0,0,0,.35);text-align:center;font-size:15px'
+  bar.innerHTML =
+    '<p style="margin:0 0 14px">The host wants to record your video individually. Do you consent?</p>' +
+    '<button class="primary" id="consent-accept">Accept</button>' +
+    '<button class="leave" id="consent-decline">Decline</button>'
+  document.body.appendChild(bar)
+ 
+  const respond = (accept) => {
+    bar.remove()
+    const call = accept ? recordingClient.acceptIndividualRecording() : recordingClient.declineIndividualRecording()
+    Promise.resolve(call)
+      .then((result) => {
+        if (result instanceof Error) throw result
+        toast(accept ? 'You accepted individual recording' : 'You declined individual recording', 'info')
+      })
+      .catch((error) => alertRecordingError(error))
+  }
+  bar.querySelector('#consent-accept').onclick = () => respond(true)
+  bar.querySelector('#consent-decline').onclick = () => respond(false)
+}
+ 
+function hideConsentPrompt() {
+  const bar = document.querySelector('#recording-consent')
+  if (bar) bar.remove()
+}
+ 
+// Fires for every participant whenever the recording state changes
+zmClient.on('recording-change', (payload) => {
+  console.log('recording-change', payload)
+  if (payload.state === 'Ask') {
+    showConsentPrompt()
+    return
+  }
+  if (payload.state === 'Accept' || payload.state === 'Decline') {
+    // Another user's consent response (host sees these) — just log it
+    console.log('individual recording consent:', payload)
+    return
+  }
+  hideConsentPrompt()
+  updateRecordingUI(payload.state)
+  if (payload.state === 'Recording') toast('Cloud recording is on', 'info')
+  if (payload.state === 'Stopped') toast('Recording stopped — it will appear in your Video SDK account once processed', 'info')
+})
+ 
+// Host can change hands (e.g. host leaves) — show/hide the controls accordingly
+zmClient.on('user-updated', () => {
+  if (recordingClient) updateRecordingUI()
+  if (zmStream) updateHostUI()
+})
+ 
+function clearAllVideo() {
+  attached.clear()
+  pending.clear()
+  selfContainer().innerHTML = ''
+  participantContainer().innerHTML = ''
+}
+ 
+// Leave: only you exit; the session keeps going for everyone else
 function leaveSession() {
   zmClient.leave()
-
+  resetToLanding()
+}
+ 
+// End: host only — closes the session for every participant
+function endSession() {
+  if (!zmClient.isHost()) {
+    toast('Only the host can end the session for everyone')
+    return
+  }
+  if (!confirmEnd()) return
+ 
+  const button = document.querySelector('#endSession')
+  button.textContent = 'Ending...'
+  button.disabled = true
+ 
+  zmClient.leave(true) // true = end the session for all users
+    .catch((error) => console.log('end session error', error))
+    .finally(() => {
+      button.textContent = 'End Session for All'
+      button.disabled = false
+      resetToLanding()
+    })
+}
+ 
+// Two-click confirm instead of window.confirm(), which some embedded browsers block
+function confirmEnd() {
+  const button = document.querySelector('#endSession')
+  if (button.dataset.armed === 'true') {
+    button.dataset.armed = 'false'
+    return true
+  }
+  button.dataset.armed = 'true'
+  button.textContent = 'Click again to end for all'
+  setTimeout(() => {
+    button.dataset.armed = 'false'
+    button.textContent = 'End Session for All'
+  }, 4000)
+  return false
+}
+ 
+// Show the End button only to the host (host can change mid-session)
+function updateHostUI() {
+  const isHost = !!(zmClient.isHost && zmClient.isHost())
+  document.querySelector('#endSession').style.display = isHost ? 'inline-block' : 'none'
+}
+ 
+// Shared UI cleanup for leave, end, and "host ended the session"
+function resetToLanding(message) {
+  clearAllVideo()
+  zmStream = null
+  recordingClient = null
+  hideConsentPrompt()
+  updateRecordingUI('Stopped')
+ 
   document.querySelector('#session').style.display = 'none'
   document.querySelector('#muteAudio').style.display = 'none'
   document.querySelector('#unmuteAudio').style.display = 'none'
   document.querySelector('#stopVideo').style.display = 'none'
-  document.querySelector('#self-view-video').style.display = 'none'
-  document.querySelector('#participant-canvas').style.display = 'none'
-  document.querySelector('#self-view-canvas').style.display = 'none'
-
+  document.querySelector('#endSession').style.display = 'none'
+  showParticipant(false)
+ 
   document.querySelector('#startVideo').style.display = 'inline-block'
   document.querySelector('#startAudio').style.display = 'inline-block'
   document.querySelector('#self-view-name').style.display = 'block'
-
+ 
   document.querySelector('#participant-name').textContent = '⏳ Waiting for participant to join...'
-  document.querySelector('#getSignature').textContent = 'Join Session'
-  document.querySelector('#getSignature').disabled = false
+  resetJoinButton()
   document.querySelector('#startVideo').textContent = 'Start Video'
   document.querySelector('#startVideo').disabled = false
-
+ 
+  const error = document.querySelector('#error')
+  if (message) {
+    error.textContent = message
+    error.style.display = 'block'
+  } else {
+    error.textContent = 'Session full, join another.'
+    error.style.display = 'none'
+  }
+ 
   document.querySelector('#landing').style.display = 'flex'
 }
-
+ 
 zmClient.on('media-sdk-change', (payload) => {
   console.log(payload)
   const { action, type, result } = payload
   if (type === 'audio' && result === 'success') {
-    if (action === 'encode') {
-      audioEncode = true
-    } else if (action === 'decode') {
-      audioDecode = true
-    }
+    if (action === 'encode') audioEncode = true
+    else if (action === 'decode') audioDecode = true
   }
 })
-
+ 
+// Replaces the old setInterval polling: act on the event directly, in order, once per user
 zmClient.on('peer-video-state-change', (payload) => {
-
-  var interval
-
-  function ifZmStream() {
-    if(zmStream) {
-      clearInterval(interval)
-
-      if(payload.action === 'Start') {
-        zmStream.renderVideo(document.querySelector('#participant-canvas'), payload.userId, 1920, 1080, 0, 0, 3).then(() => {
-          document.querySelector('#participant-canvas').style.display = 'block'
-          document.querySelector('#participant-name').style.display = 'none'
-        })
-      } else if(payload.action === 'Stop') {
-        zmStream.stopRenderVideo(document.querySelector('#participant-canvas'), payload.userId).then(() => {
-          document.querySelector('#participant-canvas').style.display = 'none'
-          document.querySelector('#participant-name').style.display = 'block'
-        })
-      }
+  if (!zmStream) return // joinSession() calls renderExistingVideos() once the stream is ready
+  if (payload.userId === zmClient.getCurrentUserInfo().userId) return
+ 
+  if (payload.action === 'Start') {
+    attachUser(payload.userId, participantContainer(), peerQuality()).then(() => showParticipant(true))
+  } else if (payload.action === 'Stop') {
+    detachUser(payload.userId).then(() => showParticipant(false))
+  }
+})
+ 
+// After a network drop the SDK reconnects, but the old video elements are dead — re-attach them
+zmClient.on('connection-change', (payload) => {
+  console.log('connection-change', payload)
+  if (payload.state === 'Closed') {
+    // Session ended by the host (or we were removed) — send everyone back to the join screen
+    if (document.querySelector('#session').style.display !== 'none') {
+      const ended = payload.reason === 'ended by host'
+      resetToLanding(ended ? 'The host ended the session.' : 'You left the session.')
+    }
+    return
+  }
+  if (payload.state === 'Reconnecting') {
+    clearAllVideo()
+  } else if (payload.state === 'Connected' && zmStream) {
+    zmStream = zmClient.getMediaStream()
+    renderExistingVideos()
+    if (zmStream.isCapturingVideo && zmStream.isCapturingVideo()) {
+      attachUser(zmClient.getCurrentUserInfo().userId, selfContainer(), VideoQuality.Video_360P)
     }
   }
-
-  interval = setInterval(ifZmStream, 1000)
 })
-
+ 
 zmClient.on('user-added', (payload) => {
-
-  if(zmClient.getAllUser().length < 3) {
-    if(payload[0].userId !== zmClient.getCurrentUserInfo().userId) {
+  if (zmClient.getAllUser().length < 3) {
+    if (payload[0].userId !== zmClient.getCurrentUserInfo().userId) {
       document.querySelector('#participant-name').textContent = payload[0].displayName
     }
   }
 })
-
+ 
 zmClient.on('user-removed', (payload) => {
-
-  if(zmClient.getAllUser().length < 2) {
-    if(payload.length && payload[0].userId !== zmClient.getCurrentUserInfo().userId) {
+  payload.forEach((user) => {
+    if (attached.has(user.userId)) detachUser(user.userId).then(() => showParticipant(false))
+  })
+  if (zmClient.getAllUser().length < 2) {
+    if (payload.length && payload[0].userId !== zmClient.getCurrentUserInfo().userId) {
       document.querySelector('#participant-name').textContent = 'Participant left...'
     }
   }
 })
-
+ 
 zmClient.on('active-share-change', (payload) => {
   console.log(payload)
 })
+ 
+
+
+
+   
+
+
+  
