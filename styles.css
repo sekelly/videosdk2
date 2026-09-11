@@ -11,7 +11,7 @@ main {
   position: relative;
 }
 
-input, button {
+input, select, button {
   font-size: 16px;
 }
 
@@ -45,7 +45,7 @@ small#error {
   text-align: center;
 }
 
-input {
+input, select {
   border-radius: 20px;
   padding: 10px 20px;
   margin-bottom: 20px;
@@ -92,7 +92,7 @@ small.zoom {
 }
 
 #session, #muteAudio, #unmuteAudio, #stopVideo,
-#startRecording, #pauseRecording, #resumeRecording, #stopRecording, #recording-indicator {
+#startRecording, #pauseRecording, #resumeRecording, #stopRecording, #recording-indicator, #endSession {
   display: none;
 }
 
@@ -196,3 +196,29 @@ a {
 @keyframes rec-blink {
   50% { opacity: 0.2; }
 }
+
+#toast {
+  display: none;
+  position: fixed;
+  top: 70px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 20;
+  max-width: 90vw;
+  padding: 10px 20px;
+  border-radius: 20px;
+  background-color: #EF476F;
+  color: #ffffff;
+  font-size: 14px;
+  text-align: center;
+}
+
+#toast.info {
+  background-color: #118AB2;
+}
+
+.end {
+  background-color: #8b0000;
+}
+  
+ 
