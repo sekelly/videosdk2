@@ -30,6 +30,12 @@ const videoContainer = () => document.querySelector('#video-container')
 let currentView = 'speaker'
 let activeSpeakerId = null
 
+// Network quality per user: { userId: { uplink, downlink } }, levels 0-5
+const networkQuality = new Map()
+// Latest QoS samples, keyed by send/receive direction
+const stats = { videoSend: null, videoReceive: null, audioSend: null, audioReceive: null }
+let statsOpen = false
+
 // enforceMultipleVideos: lets the WebAssembly renderer show more than one video without
 // SharedArrayBuffer (GitHub Pages can't send COOP/COEP headers, and the old origin-trial token expired in March 2024)
 zmClient.init('en-US', 'Global', {
@@ -113,6 +119,8 @@ function joinSession(signature) {
     // Render anyone who already had video on before we joined
     renderExistingVideos()
 
+    subscribeStatistics()
+
     recordingClient = zmClient.getRecordingClient()
     updateRecordingUI()
     updateHostUI()
@@ -148,6 +156,7 @@ function attachUser(userId, quality) {
     if (user) element.title = user.displayName
     videoContainer().appendChild(element)
     attached.add(userId)
+    updateTileQuality(userId)
     applyLayout()
   })
 }
@@ -256,6 +265,119 @@ function unmuteAudio() {
   zmStream.unmuteAudio()
   document.querySelector('#muteAudio').style.display = 'inline-block'
   document.querySelector('#unmuteAudio').style.display = 'none'
+}
+
+// ---------- Network quality & QoS statistics ----------
+// Docs: https://developers.zoom.us/docs/video-sdk/web/quality/
+// Levels: 0-1 poor, 2 normal, 3-5 good. A score needs at least two users with video on.
+
+function qualityClass(level) {
+  if (typeof level !== 'number') return ''
+  if (level <= 1) return 'bad'
+  if (level === 2) return 'normal'
+  return 'good'
+}
+
+function qualityWord(level) {
+  const c = qualityClass(level)
+  return c === 'good' ? 'Good' : c === 'normal' ? 'Normal' : c === 'bad' ? 'Poor' : 'Unknown'
+}
+
+// Your own pill: shows the weaker of your uplink and downlink
+function updateNetworkIndicator() {
+  const indicator = document.querySelector('#net-indicator')
+  if (!zmStream) {
+    indicator.style.display = 'none'
+    return
+  }
+  const mine = networkQuality.get(zmClient.getCurrentUserInfo().userId) || {}
+  const levels = [mine.uplink, mine.downlink].filter((l) => typeof l === 'number')
+  indicator.style.display = 'flex'
+
+  if (!levels.length) {
+    indicator.className = ''
+    document.querySelector('#net-label').textContent = 'Network: measuring…'
+    indicator.querySelectorAll('#net-bars i').forEach((bar) => bar.classList.remove('on'))
+    return
+  }
+
+  const worst = Math.min(...levels)
+  indicator.className = qualityClass(worst)
+  indicator.querySelectorAll('#net-bars i').forEach((bar, i) => bar.classList.toggle('on', i < Math.max(worst, 1)))
+  document.querySelector('#net-label').textContent =
+    `Network: ${qualityWord(worst)} (up ${mine.uplink ?? '–'} / down ${mine.downlink ?? '–'})`
+}
+
+// Each tile gets a coloured edge showing how that person's video is reaching you
+function updateTileQuality(userId) {
+  const player = videoContainer().querySelector(`video-player[node-id="${userId}"]`)
+  if (!player) return
+  const q = networkQuality.get(userId) || {}
+  const selfId = zmClient.getCurrentUserInfo().userId
+  // For other people, their uplink is what limits what you see
+  const level = userId === selfId ? q.uplink : q.uplink ?? q.downlink
+  player.classList.remove('net-good', 'net-normal', 'net-bad')
+  const cls = qualityClass(level)
+  if (cls) player.classList.add('net-' + cls)
+  const user = zmClient.getUser ? zmClient.getUser(userId) : null
+  if (user) player.title = `${user.displayName} — network ${qualityWord(level)}`
+}
+
+zmClient.on('network-quality-change', (payload) => {
+  const entry = networkQuality.get(payload.userId) || {}
+  entry[payload.type] = payload.level // 'uplink' or 'downlink'
+  networkQuality.set(payload.userId, entry)
+
+  if (payload.userId === zmClient.getCurrentUserInfo().userId) updateNetworkIndicator()
+  updateTileQuality(payload.userId)
+  if (statsOpen) renderStats()
+})
+
+// QoS samples: encoding true = what you send, false = what you receive
+function subscribeStatistics() {
+  try {
+    zmStream.subscribeVideoStatisticData()
+    zmStream.subscribeAudioStatisticData()
+  } catch (error) {
+    console.log('statistics subscribe failed', error)
+  }
+  updateNetworkIndicator()
+}
+
+function recordStat(kind, payload) {
+  const data = payload && payload.data ? payload.data : payload
+  if (!data) return
+  stats[kind + (data.encoding ? 'Send' : 'Receive')] = data
+  if (statsOpen) renderStats()
+}
+
+zmClient.on('video-statistic-data-change', (payload) => recordStat('video', payload))
+zmClient.on('audio-statistic-data-change', (payload) => recordStat('audio', payload))
+
+function line(label, d, extra) {
+  if (!d) return `${label}: –`
+  const bits = [`${Math.round((d.bitrate || 0) / 1000)} kbps`, `loss ${(d.avg_loss || 0).toFixed(1)}%`, `rtt ${Math.round(d.rtt || 0)} ms`, `jitter ${Math.round(d.jitter || 0)} ms`]
+  return `${label}: ${extra ? extra(d) + ' · ' : ''}${bits.join(' · ')}`
+}
+
+function renderStats() {
+  const mine = networkQuality.get(zmClient.getCurrentUserInfo().userId) || {}
+  const levels = [mine.uplink, mine.downlink].filter((l) => typeof l === 'number')
+  const res = (d) => `${d.width}x${d.height} @ ${Math.round(d.fps || 0)}fps`
+  document.querySelector('#stats-body').textContent = [
+    `Network  up ${mine.uplink ?? '–'} / down ${mine.downlink ?? '–'}  (${levels.length ? qualityWord(Math.min(...levels)) : 'measuring…'})`,
+    '',
+    line('Video sent', stats.videoSend, res),
+    line('Video received', stats.videoReceive, res),
+    line('Audio sent', stats.audioSend),
+    line('Audio received', stats.audioReceive)
+  ].join('\n')
+}
+
+function toggleStats() {
+  statsOpen = !statsOpen
+  document.querySelector('#stats-panel').style.display = statsOpen ? 'block' : 'none'
+  if (statsOpen) renderStats()
 }
 
 // ---------- Cloud recording ----------
@@ -482,6 +604,9 @@ function updateHostUI() {
 // Shared UI cleanup for leave, end, and "host ended the session"
 function resetToLanding(message) {
   clearAllVideo()
+  networkQuality.clear()
+  statsOpen = false
+  document.querySelector('#stats-panel').style.display = 'none'
   zmStream = null
   recordingClient = null
   hideConsentPrompt()
@@ -492,6 +617,7 @@ function resetToLanding(message) {
   document.querySelector('#unmuteAudio').style.display = 'none'
   document.querySelector('#stopVideo').style.display = 'none'
   document.querySelector('#endSession').style.display = 'none'
+  document.querySelector('#net-indicator').style.display = 'none'
 
   document.querySelector('#startVideo').style.display = 'inline-block'
   document.querySelector('#startAudio').style.display = 'inline-block'
@@ -572,10 +698,3 @@ zmClient.on('active-share-change', (payload) => {
 })
 
 setView('speaker')
-
-
-
-   
-
-
-  
