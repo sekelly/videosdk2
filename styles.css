@@ -264,5 +264,81 @@ a {
 .end {
   background-color: #8b0000;
 }
+
+/* ---- Network quality indicator ---- */
+#net-indicator {
+  position: fixed;
+  top: 20px;
+  left: 20px;
+  z-index: 10;
+  display: none;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  border-radius: 20px;
+  background-color: rgba(0, 0, 0, 0.6);
+  color: #ffffff;
+  font-size: 13px;
+}
+
+#net-bars {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 14px;
+}
+
+#net-bars i {
+  width: 3px;
+  background-color: rgba(255, 255, 255, 0.25);
+  border-radius: 1px;
+}
+
+#net-bars i:nth-child(1) { height: 30%; }
+#net-bars i:nth-child(2) { height: 45%; }
+#net-bars i:nth-child(3) { height: 60%; }
+#net-bars i:nth-child(4) { height: 80%; }
+#net-bars i:nth-child(5) { height: 100%; }
+
+#net-indicator.good #net-bars i.on { background-color: #06D6A0; }
+#net-indicator.normal #net-bars i.on { background-color: #FFD166; }
+#net-indicator.bad #net-bars i.on { background-color: #EF476F; }
+
+/* Tile border reflects that person's connection */
+video-player.net-good { box-shadow: inset 0 0 0 3px #06D6A0; }
+video-player.net-normal { box-shadow: inset 0 0 0 3px #FFD166; }
+video-player.net-bad { box-shadow: inset 0 0 0 3px #EF476F; }
+
+/* ---- Stats panel ---- */
+#stats-panel {
+  position: fixed;
+  top: 60px;
+  left: 20px;
+  z-index: 15;
+  display: none;
+  max-width: 340px;
+  padding: 12px 16px;
+  border-radius: 16px;
+  background-color: rgba(0, 0, 0, 0.78);
+  color: #ffffff;
+}
+
+#stats-panel pre {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+#stats-close {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 26px;
+  margin: 0;
+  padding: 4px;
+  background-color: transparent;
+  font-size: 13px;
+}
  
  
