@@ -493,7 +493,19 @@ body.sharing #caption-overlay { bottom: 164px; }
 .ctl .ico { font-size: 20px; line-height: 1.2; }
 .ctl:hover { background: var(--surface-2); color: var(--text); }
 .ctl.active { background: var(--surface-2); color: var(--text); }
-.ctl.off .ico { filter: grayscale(1); opacity: 0.75; }
+.ctl .ico svg.i {
+  display: block;
+  width: 24px;
+  height: 24px;
+  margin: 1px 0;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.ctl .ico:has(svg.i) { color: var(--text); }
+.ctl.off .ico:has(svg.i) { color: #f28b82; }
 .ctl.rec span:last-child { color: #ff9a9d; }
 .badge {
   position: absolute;
