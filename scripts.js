@@ -90,7 +90,12 @@ function loadLanding() {
   $('#userName').value = prefs.userName || ''
   $('#endpointUrl').value = prefs.endpoint || DEFAULT_ENDPOINT
   if (Array.isArray(prefs.features)) {
-    document.querySelectorAll('#features input').forEach((i) => { i.checked = prefs.features.includes(i.value) })
+    // Only restore choices for features that existed when the prefs were saved;
+    // features added since then keep their default (checked)
+    const known = Array.isArray(prefs.knownFeatures) ? prefs.knownFeatures : ['video', 'audio', 'share', 'chat', 'users', 'settings', 'recording', 'stats']
+    document.querySelectorAll('#features input').forEach((i) => {
+      if (known.includes(i.value)) i.checked = prefs.features.includes(i.value)
+    })
   }
   if (creds) {
     $('#sdkKey').value = creds.key || ''
@@ -112,7 +117,8 @@ function savePrefs() {
     authMode: authMode,
     userName: $('#userName').value.trim(),
     endpoint: $('#endpointUrl').value.trim(),
-    features: [...selectedFeatures()]
+    features: [...selectedFeatures()],
+    knownFeatures: [...document.querySelectorAll('#features input')].map((i) => i.value)
   })
   if ($('#rememberCreds').checked) {
     writeJSON(STORAGE_CREDS, { key: $('#sdkKey').value.trim(), secret: $('#sdkSecret').value.trim() })
