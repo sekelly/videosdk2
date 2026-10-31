@@ -130,7 +130,7 @@
             </aside>
           </div>
         </div>
-        <small class="powered">Built on the <a href="https://developers.zoom.us/docs/video-sdk/web/" target="_blank" rel="noopener">Zoom Video SDK for web</a> · inspired by the <a href="https://sdk.zoom.com/videosdk-uitoolkit" target="_blank" rel="noopener">UI Toolkit demo</a></small>
+        <small class="powered"><button type="button" class="linkish sdk-log-toggle">&lt;/&gt; Open SDK log</button> · Built on the <a href="https://developers.zoom.us/docs/video-sdk/web/" target="_blank" rel="noopener">Zoom Video SDK for web</a> · inspired by the <a href="https://sdk.zoom.com/videosdk-uitoolkit" target="_blank" rel="noopener">UI Toolkit demo</a></small>
       </section>
 
       <!-- ================= In-session ================= -->
@@ -146,6 +146,7 @@
               <span id="net-bars"><i></i><i></i><i></i><i></i><i></i></span>
               <span id="net-label">Network: measuring…</span>
             </div>
+            <button type="button" class="ghost small sdk-log-toggle" title="Show the Video SDK calls and events (Ctrl/Cmd+Shift+L)">&lt;/&gt; SDK log</button>
             <button type="button" class="ghost small" id="copyInvite" title="Copy a link with the session name and passcode filled in">🔗 Copy invite</button>
           </div>
         </header>
@@ -277,7 +278,26 @@
       </section>
     </main>
 
+    <!-- SDK log: every Video SDK call and event, grouped by the button that triggered it -->
+    <section id="sdk-log" hidden aria-label="SDK log">
+      <header class="sdk-log-head">
+        <strong>SDK log</strong>
+        <span id="sdk-log-count" class="sdk-log-count"></span>
+        <span class="sdk-log-spacer"></span>
+        <button type="button" class="ghost small" id="sdk-log-copy">Copy</button>
+        <button type="button" class="ghost small" id="sdk-log-clear">Clear</button>
+        <button type="button" class="ghost small" id="sdk-log-close" aria-label="Close SDK log">✕</button>
+      </header>
+      <div class="sdk-log-filters">
+        <label class="check"><input type="checkbox" id="sdk-log-events"> Events</label>
+        <label class="check"><input type="checkbox" id="sdk-log-noisy"> Noisy events</label>
+        <label class="check"><input type="checkbox" id="sdk-log-getters"> Getters (get*/is*)</label>
+      </div>
+      <ol id="sdk-log-list"></ol>
+    </section>
+
     <script src="https://source.zoom.us/videosdk/zoom-video-2.5.0.min.js"></script>
+    <script src="sdklog.js"></script>
     <script src="jwt.js"></script>
     <script src="scripts.js"></script>
     <script src="captions.js"></script>
