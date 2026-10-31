@@ -30,13 +30,14 @@ After joining, the decoded token payload is shown on the join screen (with a Cop
 - Live transcript panel with Download .txt; late joiners load the transcript history
 - Live translation: pick the language you speak and the language to translate captions into (35 languages; available pairs come from the account)
 - Host can turn captions off for everyone and lock the speaking language
+- **SDK log** (`</> SDK log` button or Ctrl/Cmd+Shift+L): every Video SDK call (e.g. `liveTranscription.setTranslationLanguage("es")`) with arguments, result or error, and timing, grouped under the button you clicked, plus the events Zoom sends back. Copy exports it as text.
 - Network quality indicator, per-tile quality borders, QoS stats overlay
 - Leave, or end for all (host)
 - Copy invite link (session name + passcode only — never credentials). Guests must sign with the same Video SDK key to land in the same session.
 
 ## Running it
 
-It's static: `index.html`, `styles.css`, `scripts.js`, `jwt.js`, `captions.js`.
+It's static: `index.html`, `styles.css`, `scripts.js`, `jwt.js`, `captions.js`, `sdklog.js`.
 
 - **GitHub Pages**: push and enable Pages for the repo.
 - **Locally**: `npx serve .` or `python3 -m http.server`, then open `http://localhost:…`.

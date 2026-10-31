@@ -2,7 +2,8 @@
 // Anyone can enter their own Video SDK key & secret; the JWT is signed in the browser (see jwt.js).
 // Docs: https://developers.zoom.us/docs/video-sdk/web/
 
-const VideoSDK = window.WebVideoSDK.default
+// Wrapped so the SDK log (sdklog.js) can show every call; the SDK behaves exactly the same
+const VideoSDK = sdkLog.instrument(window.WebVideoSDK.default, 'ZoomVideo')
 // Video_90P=0, 180P=1, 360P=2, 720P=3 (720p is the max a web client can render)
 const VideoQuality = window.WebVideoSDK.VideoQuality || { Video_360P: 2, Video_720P: 3 }
 
