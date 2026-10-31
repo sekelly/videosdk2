@@ -207,12 +207,6 @@
 
             <div class="panel" data-panel="captions" hidden>
               <div class="caption-settings">
-                <label>I'm speaking
-                  <select id="speakingLanguage"></select>
-                </label>
-                <label>Translate captions to
-                  <select id="translationLanguage"></select>
-                </label>
                 <div class="row">
                   <label>Caption size
                     <select id="captionSize">
@@ -228,7 +222,6 @@
                     </select>
                   </label>
                 </div>
-                <label class="check" id="hostCaptionRow" hidden><input type="checkbox" id="hostDisableCaptions"> Turn off captions for everyone (host)</label>
                 <small class="hint" id="captionHint"></small>
               </div>
               <div class="transcript-head">
@@ -258,8 +251,11 @@
             <button type="button" class="ctl" id="chatButton" data-feature="chat"><span class="ico">💬</span><span>Chat</span><b class="badge" id="chatBadge" hidden></b></button>
             <button type="button" class="ctl" id="usersButton" data-feature="users"><span class="ico">👥</span><span>People</span></button>
             <button type="button" class="ctl" id="settingsButton" data-feature="settings"><span class="ico">⚙️</span><span>Settings</span></button>
-            <button type="button" class="ctl" id="ccButton" data-feature="captions" aria-pressed="false"><span class="ico cc">CC</span><span>Captions</span></button>
-            <button type="button" class="ctl" id="captionsButton" data-feature="captions"><span class="ico">📝</span><span>Transcript</span></button>
+            <div class="split-ctl" id="ccGroup" data-feature="captions">
+              <button type="button" class="ctl" id="ccButton" aria-pressed="false" title="Turn captions on or off"><span class="ico"><svg class="i" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2.5"/><path d="M7 11h3M13 11h4M7 15h6M15 15h2"/></svg></span><span>Captions</span></button>
+              <button type="button" class="caret" id="ccMenuButton" aria-haspopup="menu" aria-expanded="false" aria-label="Caption options"><svg class="i caret-i" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 15l6-6 6 6"/></svg></button>
+              <div class="ctl-menu" id="ccMenu" role="menu" hidden></div>
+            </div>
 
             <button type="button" class="ctl" id="viewToggle" data-feature="video"><span class="ico">▦</span><span id="viewLabel">Gallery</span></button>
 

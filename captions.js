@@ -95,40 +95,200 @@ function currentSpeakingCode() {
   return captionPrefs.speaking || 'en'
 }
 
-function fillLanguageSelect(select, languages, value, offLabel) {
-  select.innerHTML = ''
-  if (offLabel) select.add(new Option(offLabel, ''))
-  languages.forEach((l) => select.add(new Option(l.name, l.code)))
-  select.value = [...select.options].some((o) => o.value === value) ? value : (offLabel ? '' : select.options[0].value)
-}
-
 function renderCaptionSettings() {
   if (!ltClient) return
   const status = captionStatus()
-  const speaking = currentSpeakingCode()
-  fillLanguageSelect($('#speakingLanguage'), speakingOptions(), speaking)
-
-  const translationOff = status.isLiveTranslationEnabled === false
-  fillLanguageSelect($('#translationLanguage'), translationOff ? [] : translationOptions(speaking), captionPrefs.translation, 'Off — no translation')
-  $('#translationLanguage').disabled = translationOff
-
   $('#captionSize').value = captionPrefs.size
   $('#captionShow').value = captionPrefs.show
-  updateCaptionHostControls()
 
   const hints = []
   if (status.isLiveTranscriptionEnabled === false) hints.push('Live transcription is not enabled for the Video SDK account that signed this session.')
-  if (translationOff) hints.push('Translation is a separate add-on and is not enabled for this account.')
   if (status.isHostDisableCaptions) hints.push('The host has turned captions off for everyone.')
-  if (!transcriptionStarted && !hints.length) hints.push('Turn on CC or choose a language to start transcription.')
+  if (!transcriptionStarted && !hints.length) hints.push('Turn on Captions to start the transcript. Use the ^ next to Captions to pick languages.')
   $('#captionHint').textContent = hints.join(' ')
+  if (ccMenuView) renderCcMenu()
 }
 
 function updateCaptionHostControls() {
-  if (!ltClient) return
-  const isHost = !!(zmClient.isHost && zmClient.isHost())
-  show('#hostCaptionRow', isHost)
-  $('#hostDisableCaptions').checked = !!captionStatus().isHostDisableCaptions
+  if (ccMenuView) renderCcMenu()
+}
+
+// ---------- Captions menu (split button, like the UI Toolkit) ----------
+// Views: 'main' | 'speaking' | 'translation' | 'host'
+
+let ccMenuView = null
+let captionLanguageLocked = false
+
+function amHost() {
+  return !!(zmClient.isHost && zmClient.isHost())
+}
+
+function menuItem(menu, label, { value, chevron, checked, disabled, onClick } = {}) {
+  const item = document.createElement('button')
+  item.type = 'button'
+  item.className = 'menu-item'
+  item.setAttribute('role', checked === undefined ? 'menuitem' : 'menuitemradio')
+  if (checked !== undefined) item.setAttribute('aria-checked', String(!!checked))
+  item.disabled = !!disabled
+  const check = document.createElement('span')
+  check.className = 'menu-check'
+  check.textContent = checked ? '✓' : ''
+  const text = document.createElement('span')
+  text.className = 'menu-label'
+  text.textContent = label
+  item.append(check, text)
+  if (value) {
+    const v = document.createElement('span')
+    v.className = 'menu-value'
+    v.textContent = value
+    item.appendChild(v)
+  }
+  if (chevron) {
+    const c = document.createElement('span')
+    c.className = 'menu-chevron'
+    c.textContent = '›'
+    item.appendChild(c)
+  }
+  if (onClick) item.addEventListener('click', (e) => { e.stopPropagation(); onClick() })
+  menu.appendChild(item)
+  return item
+}
+
+function menuTitle(menu, title, backTo) {
+  const head = document.createElement('div')
+  head.className = 'menu-title'
+  if (backTo) {
+    const back = document.createElement('button')
+    back.type = 'button'
+    back.className = 'menu-back'
+    back.setAttribute('aria-label', 'Back')
+    back.textContent = '‹'
+    back.addEventListener('click', (e) => { e.stopPropagation(); openCcMenu(backTo) })
+    head.appendChild(back)
+  }
+  const h = document.createElement('strong')
+  h.textContent = title
+  head.appendChild(h)
+  menu.appendChild(head)
+}
+
+function menuNote(menu, text) {
+  const note = document.createElement('p')
+  note.className = 'menu-note'
+  note.textContent = text
+  menu.appendChild(note)
+}
+
+function renderCcMenu() {
+  const menu = $('#ccMenu')
+  menu.innerHTML = ''
+  const status = captionStatus()
+  const speaking = findLanguage(currentSpeakingCode())
+  const translation = findLanguage(captionPrefs.translation)
+  const translationOff = status.isLiveTranslationEnabled === false
+
+  if (ccMenuView === 'speaking') {
+    menuTitle(menu, 'Speaking language', 'main')
+    const list = document.createElement('div')
+    list.className = 'menu-scroll'
+    const locked = captionLanguageLocked && !amHost()
+    speakingOptions().forEach((l) => menuItem(list, l.name, {
+      checked: speaking === l,
+      disabled: locked,
+      onClick: () => { onSpeakingChange(l.code); openCcMenu('main') }
+    }))
+    menu.appendChild(list)
+    if (locked) menuNote(menu, 'The host has locked the speaking language.')
+    return
+  }
+
+  if (ccMenuView === 'translation') {
+    menuTitle(menu, 'Translate captions to', 'main')
+    const list = document.createElement('div')
+    list.className = 'menu-scroll'
+    menuItem(list, 'Off', { checked: !translation, onClick: () => { onTranslationChange(''); openCcMenu('main') } })
+    translationOptions(speaking ? speaking.code : 'en').forEach((l) => menuItem(list, l.name, {
+      checked: translation === l,
+      onClick: () => { onTranslationChange(l.code); openCcMenu('main') }
+    }))
+    menu.appendChild(list)
+    return
+  }
+
+  if (ccMenuView === 'host') {
+    menuTitle(menu, 'Host caption control settings', 'main')
+    const allowed = !status.isHostDisableCaptions
+    menuItem(menu, 'Allow captions for everyone', { checked: allowed, onClick: () => setCaptionsAllowed(!allowed) })
+    if (ltClient && ltClient.lockTranscriptionLanguage) {
+      menuItem(menu, 'Only host can change speaking language', {
+        checked: captionLanguageLocked,
+        onClick: () => setLanguageLocked(!captionLanguageLocked)
+      })
+    }
+    menuNote(menu, 'Turning captions off stops captions and the transcript for all participants.')
+    return
+  }
+
+  // Main view
+  menuTitle(menu, 'Captions')
+  menuItem(menu, 'Speaking language', { value: speaking ? speaking.name : 'Not set', chevron: true, onClick: () => openCcMenu('speaking') })
+  menuItem(menu, 'Translate captions to', {
+    value: translationOff ? 'Not available' : (translation ? translation.name : 'Off'),
+    chevron: !translationOff,
+    disabled: translationOff,
+    onClick: () => openCcMenu('translation')
+  })
+  menuItem(menu, 'View full transcript', { onClick: () => { closeCcMenu(); if (openPanel !== 'captions') togglePanel('captions') } })
+  if (amHost()) menuItem(menu, 'Host caption control settings', { chevron: true, onClick: () => openCcMenu('host') })
+  if (status.isLiveTranscriptionEnabled === false) menuNote(menu, 'Live transcription is not enabled for this Video SDK account.')
+  else if (translationOff) menuNote(menu, 'Translation is a separate add-on and is not enabled for this account.')
+}
+
+function openCcMenu(view) {
+  ccMenuView = view || 'main'
+  renderCcMenu()
+  const menu = $('#ccMenu')
+  show(menu, true)
+  // Anchor above the Captions button, kept on screen
+  const rect = $('#ccGroup').getBoundingClientRect()
+  const left = Math.min(Math.max(12, rect.left), window.innerWidth - menu.offsetWidth - 12)
+  menu.style.left = Math.max(12, left) + 'px'
+  menu.style.bottom = (window.innerHeight - rect.top + 8) + 'px'
+  $('#ccMenuButton').setAttribute('aria-expanded', 'true')
+  $('#ccMenuButton').classList.add('active')
+  const first = $('#ccMenu').querySelector('.menu-back, .menu-item:not(:disabled)')
+  if (first) first.focus({ preventScroll: true })
+}
+
+function closeCcMenu() {
+  ccMenuView = null
+  show('#ccMenu', false)
+  $('#ccMenuButton').setAttribute('aria-expanded', 'false')
+  $('#ccMenuButton').classList.remove('active')
+}
+
+function setCaptionsAllowed(allowed) {
+  Promise.resolve(ltClient && ltClient.disableCaptions(!allowed))
+    .then((result) => {
+      const err = resultError(result)
+      if (err) throw err
+      if (!allowed) { setCaptionsVisible(false); transcriptionStarted = false }
+      toast(allowed ? 'Captions allowed for everyone' : 'Captions turned off for everyone', 'info')
+    })
+    .catch((error) => toast('Could not change captions: ' + describeError(error)))
+    .finally(() => setTimeout(() => { if (ccMenuView) renderCcMenu() }, 300))
+}
+
+function setLanguageLocked(locked) {
+  Promise.resolve(ltClient.lockTranscriptionLanguage(locked))
+    .then((result) => {
+      const err = resultError(result)
+      if (err) throw err
+      captionLanguageLocked = locked
+      toast(locked ? 'Only the host can change the speaking language' : 'Everyone can change their speaking language', 'info')
+    })
+    .catch((error) => toast('Could not change language lock: ' + describeError(error)))
+    .finally(() => { if (ccMenuView) renderCcMenu() })
 }
 
 // ---------- Starting & languages ----------
@@ -315,7 +475,7 @@ async function toggleCaptions() {
   try {
     await ensureTranscription()
     setCaptionsVisible(true)
-    if (!captionPrefs.speaking) toast('Captions on. Set the language you speak in Transcript for better accuracy.', 'info')
+    if (!captionPrefs.speaking) toast('Captions on. Set your speaking language from the ^ next to Captions for better accuracy.', 'info')
   } catch (error) {
     console.log('captions error', error)
     toast('Captions: ' + describeError(error))
@@ -347,8 +507,7 @@ function downloadTranscript() {
 function captionsOnJoin() {
   ltClient = zmClient.getLiveTranscriptionClient ? zmClient.getLiveTranscriptionClient() : null
   if (!ltClient) {
-    show('#ccButton', false)
-    show('#captionsButton', false)
+    show('#ccGroup', false)
     return
   }
   // If someone already started transcription, caption-message events arrive either way
@@ -369,6 +528,8 @@ function captionsReset() {
   overlayLines.clear()
   clearInterval(overlayTimer)
   captionsVisible = false
+  captionLanguageLocked = false
+  closeCcMenu()
   const button = $('#ccButton')
   if (button) { button.classList.remove('active'); button.setAttribute('aria-pressed', 'false') }
   $('#transcript-list').innerHTML = ''
@@ -393,7 +554,7 @@ zmClient.on('caption-status', (payload) => {
     toast('The host turned off captions', 'info')
   }
   if (payload && payload.translationStarted && !captionPrefs.speaking) {
-    toast('Translation is on. Set the language you speak in Transcript so others get accurate translations.', 'info')
+    toast('Translation is on. Set your speaking language from the ^ next to Captions so others get accurate translations.', 'info')
   }
   if (payload && payload.sessionLanguage) {
     const lang = findLanguage(payload.sessionLanguage)
@@ -403,24 +564,20 @@ zmClient.on('caption-status', (payload) => {
 })
 
 $('#ccButton').addEventListener('click', toggleCaptions)
-$('#captionsButton').addEventListener('click', () => togglePanel('captions'))
-$('#speakingLanguage').addEventListener('change', (e) => onSpeakingChange(e.target.value))
-$('#translationLanguage').addEventListener('change', (e) => onTranslationChange(e.target.value))
+$('#ccMenuButton').addEventListener('click', (e) => {
+  e.stopPropagation()
+  if (ccMenuView) closeCcMenu()
+  else openCcMenu('main')
+})
+$('#ccMenu').addEventListener('click', (e) => e.stopPropagation())
+document.addEventListener('click', () => { if (ccMenuView) closeCcMenu() })
+window.addEventListener('resize', () => { if (ccMenuView) closeCcMenu() })
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && ccMenuView) {
+    closeCcMenu()
+    $('#ccMenuButton').focus()
+  }
+})
 $('#captionSize').addEventListener('change', (e) => { captionPrefs.size = e.target.value; saveCaptionPrefs(); renderOverlay() })
 $('#captionShow').addEventListener('change', (e) => { captionPrefs.show = e.target.value; saveCaptionPrefs(); renderOverlay() })
 $('#downloadTranscript').addEventListener('click', downloadTranscript)
-$('#hostDisableCaptions').addEventListener('change', (e) => {
-  const disable = e.target.checked
-  Promise.resolve(ltClient && ltClient.disableCaptions(disable))
-    .then((result) => {
-      const err = resultError(result)
-      if (err) throw err
-      if (disable) { setCaptionsVisible(false); transcriptionStarted = false }
-      toast(disable ? 'Captions turned off for everyone' : 'Captions allowed again', 'info')
-    })
-    .catch((error) => {
-      e.target.checked = !disable
-      toast('Could not change captions: ' + describeError(error))
-    })
-    .finally(() => setTimeout(renderCaptionSettings, 300))
-})
