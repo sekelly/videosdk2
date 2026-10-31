@@ -36,7 +36,7 @@ let activeSpeakerId = null
 
 // Network quality per user: { userId: { uplink, downlink } }, levels 0-5
 const networkQuality = new Map()
-const stats = { videoSend: null, videoReceive: null, audioSend: null, audioReceive: null }
+const stats = { videoSend: null, videoReceive: null, audioSend: null, audioReceive: null, shareSend: null, shareReceive: null }
 let statsOpen = false
 
 // Screen share state
@@ -377,6 +377,8 @@ function resetToLanding(message) {
   clearAllVideo()
   resetShareUI()
   networkQuality.clear()
+  Object.keys(stats).forEach((k) => { stats[k] = null })
+  clearTimeout(resubscribeStatistics.timer)
   statsOpen = false
   show('#stats-panel', false)
   zmStream = null
@@ -482,6 +484,7 @@ function startVideo() {
       show('#startVideo', false)
       show('#stopVideo', true)
       pendingDevices.camera = null
+      resubscribeStatistics()
       if (features.has('settings')) populateDevices()
     })
     .catch((error) => {
@@ -552,6 +555,7 @@ function startAudio() {
         if (pendingDevices.speaker) await zmStream.switchSpeaker(pendingDevices.speaker)
       } catch (e) { console.log('device switch failed', e) }
       pendingDevices.mic = pendingDevices.speaker = null
+      resubscribeStatistics()
       if (features.has('settings')) populateDevices()
     })
     .catch((error) => {
@@ -601,6 +605,7 @@ async function startShare() {
     show('#share-area', true)
     show('#startShare', false)
     show('#stopShare', true)
+    resubscribeStatistics()
     applyLayout()
   } catch (error) {
     console.log('share error', error)
@@ -1003,14 +1008,26 @@ zmClient.on('network-quality-change', (payload) => {
   if (statsOpen) renderStats()
 })
 
+// QoS events only flow once media is actually running: Zoom needs at least two users with
+// audio connected (audio stats), video on (video stats) or one sharing (share stats), and a
+// subscription made right after join — before startAudio/startVideo — can stay silent.
+// So we subscribe on join and again (debounced) whenever media starts for anyone.
 function subscribeStatistics() {
-  try {
-    zmStream.subscribeVideoStatisticData()
-    zmStream.subscribeAudioStatisticData()
-  } catch (error) {
-    console.log('statistics subscribe failed', error)
-  }
+  if (!zmStream) return
+  const calls = ['subscribeVideoStatisticData', 'subscribeAudioStatisticData', 'subscribeShareStatisticData']
+  calls.forEach((name) => {
+    try {
+      if (zmStream[name]) Promise.resolve(zmStream[name]()).catch((e) => console.log(name + ' failed', e))
+    } catch (error) {
+      console.log(name + ' failed', error)
+    }
+  })
   updateNetworkIndicator()
+}
+
+function resubscribeStatistics() {
+  clearTimeout(resubscribeStatistics.timer)
+  resubscribeStatistics.timer = setTimeout(subscribeStatistics, 1500)
 }
 
 function recordStat(kind, payload) {
@@ -1021,6 +1038,7 @@ function recordStat(kind, payload) {
 }
 
 zmClient.on('video-statistic-data-change', (payload) => recordStat('video', payload))
+zmClient.on('share-statistic-data-change', (payload) => recordStat('share', payload))
 zmClient.on('audio-statistic-data-change', (payload) => recordStat('audio', payload))
 
 function statLine(label, d, extra) {
@@ -1036,7 +1054,12 @@ function renderStats() {
   const levels = [mine.uplink, mine.downlink].filter((l) => typeof l === 'number')
   const res = (d) => d.width + 'x' + d.height + ' @ ' + Math.round(d.fps || 0) + 'fps'
   const info = zmClient.getSessionInfo()
-  $('#stats-body').textContent = [
+  const users = zmClient.getAllUser()
+  const withAudio = users.filter((u) => u.audio).length
+  const withVideo = users.filter((u) => u.bVideoOn).length
+  const sharing = users.some((u) => u.sharerOn) || mySharing
+
+  const lines = [
     'Session  ' + info.topic + '  (id ' + (info.sessionId || '–') + ')',
     'Network  up ' + (mine.uplink ?? '–') + ' / down ' + (mine.downlink ?? '–') + '  (' + (levels.length ? qualityWord(Math.min(...levels)) : 'measuring…') + ')',
     '',
@@ -1044,7 +1067,18 @@ function renderStats() {
     statLine('Video received', stats.videoReceive, res),
     statLine('Audio sent', stats.audioSend),
     statLine('Audio received', stats.audioReceive)
-  ].join('\n')
+  ]
+  if (stats.shareSend || stats.shareReceive || sharing) {
+    lines.push(statLine('Share sent', stats.shareSend, res), statLine('Share received', stats.shareReceive, res))
+  }
+
+  // Explain empty rows instead of leaving bare dashes
+  const notes = []
+  if (!stats.audioSend && !stats.audioReceive && withAudio < 2) notes.push('Audio stats start once 2+ people have joined audio (' + withAudio + ' now).')
+  if (!stats.videoSend && !stats.videoReceive && withVideo < 2) notes.push('Video stats start once 2+ people have video on (' + withVideo + ' now).')
+  if ((!stats.audioSend && withAudio >= 2) || (!stats.videoSend && withVideo >= 2)) notes.push('Waiting for the first QoS sample…')
+  if (notes.length) lines.push('', ...notes)
+  $('#stats-body').textContent = lines.join('\n')
 }
 
 function toggleStats() {
@@ -1168,7 +1202,7 @@ zmClient.on('recording-change', (payload) => {
 // Session events
 // =====================================================================
 
-zmClient.on('user-added', () => { if (zmStream) { applyLayout(); refreshUsers() } })
+zmClient.on('user-added', () => { if (zmStream) { applyLayout(); refreshUsers(); resubscribeStatistics() } })
 
 zmClient.on('user-removed', (payload) => {
   if (!zmStream) return
@@ -1183,6 +1217,8 @@ zmClient.on('user-removed', (payload) => {
 zmClient.on('user-updated', () => {
   if (!zmStream) return
   if (features.has('captions')) updateCaptionHostControls()
+  resubscribeStatistics() // someone may have joined audio
+  if (statsOpen) renderStats()
   updateRecordingUI()
   updateHostUI()
   syncMyAudioButtons()
@@ -1200,7 +1236,7 @@ zmClient.on('media-sdk-change', (payload) => {
 zmClient.on('peer-video-state-change', (payload) => {
   if (!zmStream) return // enterSession() calls renderExistingVideos() once the stream is ready
   if (payload.userId === zmClient.getCurrentUserInfo().userId) return
-  if (payload.action === 'Start') attachUser(payload.userId, peerQuality())
+  if (payload.action === 'Start') { attachUser(payload.userId, peerQuality()); resubscribeStatistics() }
   else if (payload.action === 'Stop') detachUser(payload.userId)
   refreshUsers()
 })
@@ -1223,6 +1259,7 @@ zmClient.on('connection-change', (payload) => {
     zmStream = zmClient.getMediaStream()
     renderExistingVideos()
     checkExistingShare()
+    resubscribeStatistics()
   }
 })
 
