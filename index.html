@@ -3,75 +3,248 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Video SDK JS 2.5.0</title>
+    <title>Video SDK Playground</title>
+    <link rel="icon" href="favicon.ico">
     <link rel="stylesheet" href="styles.css">
   </head>
-    <style>
-    body {
-       background-color: rgb(167, 173, 177);
-       background-image: url("https://zoom.us/account/branding/p/b7f37763-6dee-4be3-8c55-cda5ba5c7310.gif");
-    }
-  </style>
   <body>
     <main>
-      <div id="landing">
-        <h2> Video WebSDK2 2.5.0 💬</h2>
-        <small id="error">Session full, join another.</small>
-        <input type="text" placeholder="😃 Enter Name" id="userName">
-        <input type="text" placeholder="🚪 Session Name" id="sessionName">
-        <input type="text" placeholder="🔑 Session Passcode" id="sessionPasscode">
-        <select id="role">
-          <option value="1">👑 Join as Host</option>
-          <option value="0">🙋 Join as Participant</option>
-        </select>
-        <button onClick="getSignature()" class="primary" id="getSignature">Join Session</button>
-        <small class="zoom">Powered by the <a href="https://marketplace.zoom.us/docs/sdk/video/introduction/" target="_blank">Zoom Video SDK</a></small>
-      </div>
+      <!-- ================= Join screen ================= -->
+      <section id="landing">
+        <div class="landing-card">
+          <header class="landing-head">
+            <h1>Video SDK Playground</h1>
+            <p>Bring your own Video SDK key &amp; secret, pick features, and join a session. <span class="sdk-version" id="sdkVersion"></span></p>
+          </header>
 
-      <div id="session">
-        <div id="toast"></div>
-        <div id="recording-indicator"><span class="dot"></span><span id="recording-label">REC</span> · This session is being recorded</div>
-        <div id="net-indicator" title="Your connection quality">
-          <span id="net-bars"><i></i><i></i><i></i><i></i><i></i></span>
-          <span id="net-label">Checking network…</span>
+          <div class="landing-grid">
+            <div class="landing-form">
+              <!-- 1. Credentials -->
+              <fieldset>
+                <legend>1 · Credentials</legend>
+                <div class="segmented" role="tablist" id="authMode">
+                  <button type="button" data-mode="keys" class="active">Key &amp; secret</button>
+                  <button type="button" data-mode="endpoint">Signature endpoint</button>
+                  <button type="button" data-mode="jwt">Paste JWT</button>
+                </div>
+
+                <div class="auth-pane" data-pane="keys">
+                  <label>Video SDK Key
+                    <input type="text" id="sdkKey" autocomplete="off" spellcheck="false" placeholder="From Build platform → Video SDK → App credentials">
+                  </label>
+                  <label>Video SDK Secret
+                    <span class="secret-wrap">
+                      <input type="password" id="sdkSecret" autocomplete="off" spellcheck="false" placeholder="Used only in this browser to sign the token">
+                      <button type="button" class="ghost" id="toggleSecret" aria-label="Show secret">Show</button>
+                    </span>
+                  </label>
+                  <label class="check"><input type="checkbox" id="rememberCreds"> Remember on this device (saved in this browser's local storage)</label>
+                </div>
+
+                <div class="auth-pane" data-pane="endpoint" hidden>
+                  <label>Signature endpoint URL
+                    <input type="url" id="endpointUrl" placeholder="https://your-auth-endpoint.example.com/">
+                  </label>
+                  <small class="hint">POSTs <code>{ sessionName, role, sessionKey, userIdentity, cloudRecordingOption, cloudRecordingElection }</code> and expects <code>{ signature }</code> — the shape used by <a href="https://github.com/zoom/videosdk-auth-endpoint-sample" target="_blank" rel="noopener">videosdk-auth-endpoint-sample</a>.</small>
+                </div>
+
+                <div class="auth-pane" data-pane="jwt" hidden>
+                  <label>Video SDK JWT
+                    <textarea id="pastedJwt" rows="3" spellcheck="false" placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."></textarea>
+                  </label>
+                  <small class="hint">The token's <code>tpc</code> must match the session name below.</small>
+                </div>
+              </fieldset>
+
+              <!-- 2. Session -->
+              <fieldset>
+                <legend>2 · Session</legend>
+                <div class="row">
+                  <label>Session name
+                    <input type="text" id="sessionName" maxlength="200" placeholder="e.g. support-test-1">
+                  </label>
+                  <label>Display name
+                    <input type="text" id="userName" maxlength="64" placeholder="Your name">
+                  </label>
+                </div>
+                <div class="row">
+                  <label>Passcode <span class="opt">(optional)</span>
+                    <input type="text" id="sessionPasscode" maxlength="10" autocomplete="off">
+                  </label>
+                  <label>Role
+                    <select id="role">
+                      <option value="1">Host</option>
+                      <option value="0">Participant</option>
+                    </select>
+                  </label>
+                </div>
+                <details class="advanced">
+                  <summary>Advanced token options</summary>
+                  <div class="row">
+                    <label>user_identity <span class="opt">(optional)</span>
+                      <input type="text" id="userIdentity" maxlength="35">
+                    </label>
+                    <label>session_key <span class="opt">(optional)</span>
+                      <input type="text" id="sessionKey" maxlength="36">
+                    </label>
+                  </div>
+                  <label class="check"><input type="checkbox" id="perUserRecording" checked> Per-user cloud recording (<code>cloud_recording_option: 1</code>, <code>cloud_recording_election: 1</code>)</label>
+                </details>
+              </fieldset>
+
+              <!-- 3. Features -->
+              <fieldset>
+                <legend>3 · Features</legend>
+                <div class="chips" id="features">
+                  <label><input type="checkbox" value="video" checked><span>Video</span></label>
+                  <label><input type="checkbox" value="audio" checked><span>Audio</span></label>
+                  <label><input type="checkbox" value="share" checked><span>Screen share</span></label>
+                  <label><input type="checkbox" value="chat" checked><span>Chat</span></label>
+                  <label><input type="checkbox" value="users" checked><span>Participants</span></label>
+                  <label><input type="checkbox" value="settings" checked><span>Settings</span></label>
+                  <label><input type="checkbox" value="recording" checked><span>Recording</span></label>
+                  <label><input type="checkbox" value="stats" checked><span>Stats</span></label>
+                </div>
+              </fieldset>
+
+              <small id="error" role="alert"></small>
+              <button type="button" class="primary big" id="joinButton">Join session</button>
+              <small class="security-note">🔒 With “Key &amp; secret”, the token is signed in this browser with Web Crypto. Your secret is never sent to any server — only the signed token goes to Zoom. Use this for testing; production apps should sign on a server.</small>
+            </div>
+
+            <!-- Preview -->
+            <aside class="preview">
+              <div class="preview-frame">
+                <video id="previewVideo" muted playsinline></video>
+                <span class="preview-empty" id="previewEmpty">Camera preview is off</span>
+              </div>
+              <div class="preview-controls">
+                <button type="button" class="ghost" id="previewToggle">Preview camera</button>
+                <select id="previewCamera" aria-label="Camera"></select>
+              </div>
+              <div class="token-box" id="tokenBox" hidden>
+                <div class="token-head"><strong>Last token payload</strong><button type="button" class="ghost small" id="copyToken">Copy JWT</button></div>
+                <pre id="tokenPayload"></pre>
+              </div>
+            </aside>
+          </div>
         </div>
-        <div id="stats-panel"><button id="stats-close" onClick="toggleStats()">✕</button><pre id="stats-body">Waiting for data…</pre></div>
-        <div id="stage">
-          <h3 id="stage-message">⏳ Waiting for participant to join...</h3>
-          <video-player-container id="video-container"></video-player-container>
+        <small class="powered">Built on the <a href="https://developers.zoom.us/docs/video-sdk/web/" target="_blank" rel="noopener">Zoom Video SDK for web</a> · inspired by the <a href="https://sdk.zoom.com/videosdk-uitoolkit" target="_blank" rel="noopener">UI Toolkit demo</a></small>
+      </section>
+
+      <!-- ================= In-session ================= -->
+      <section id="session" hidden>
+        <header class="topbar">
+          <div class="topbar-left">
+            <strong id="sessionTitle">Session</strong>
+            <span class="pill" id="userCount">1 participant</span>
+            <span class="pill rec" id="recording-indicator" hidden><span class="dot"></span><span id="recording-label">REC</span></span>
+          </div>
+          <div class="topbar-right">
+            <div id="net-indicator" title="Your connection quality" hidden>
+              <span id="net-bars"><i></i><i></i><i></i><i></i><i></i></span>
+              <span id="net-label">Network: measuring…</span>
+            </div>
+            <button type="button" class="ghost small" id="copyInvite" title="Copy a link with the session name and passcode filled in">🔗 Copy invite</button>
+          </div>
+        </header>
+
+        <div class="session-body">
+          <div id="stage">
+            <div id="share-area" hidden>
+              <!-- Someone else's share renders here -->
+              <video-player-container id="share-container"></video-player-container>
+              <canvas id="share-view-canvas" width="1920" height="1080" hidden></canvas>
+              <!-- Your own share: the SDK picks video or canvas depending on the browser -->
+              <video id="my-share-video" width="1920" height="1080" playsinline muted hidden></video>
+              <canvas id="my-share-canvas" width="1920" height="1080" hidden></canvas>
+              <span class="share-label" id="share-label"></span>
+            </div>
+            <div id="video-area">
+              <h3 id="stage-message">Waiting for video…</h3>
+              <video-player-container id="video-container"></video-player-container>
+            </div>
+            <div id="stats-panel" hidden><button type="button" class="ghost small" id="stats-close">✕</button><pre id="stats-body">Waiting for data…</pre></div>
+          </div>
+
+          <!-- Side panel: chat / participants / settings -->
+          <aside id="side-panel" hidden>
+            <div class="panel-head">
+              <div class="segmented" id="panelTabs">
+                <button type="button" data-panel="chat">Chat</button>
+                <button type="button" data-panel="users">Participants</button>
+                <button type="button" data-panel="settings">Settings</button>
+              </div>
+              <button type="button" class="ghost small" id="panelClose" aria-label="Close panel">✕</button>
+            </div>
+
+            <div class="panel" data-panel="chat" hidden>
+              <ol id="chat-list"></ol>
+              <form id="chat-form">
+                <select id="chat-to" aria-label="Send to"></select>
+                <div class="chat-input">
+                  <input type="text" id="chat-text" maxlength="1000" placeholder="Message…" autocomplete="off">
+                  <button type="submit" class="primary small">Send</button>
+                </div>
+              </form>
+            </div>
+
+            <div class="panel" data-panel="users" hidden>
+              <ul id="user-list"></ul>
+            </div>
+
+            <div class="panel" data-panel="settings" hidden>
+              <label>Camera <select id="cameraSelect"></select></label>
+              <label>Microphone <select id="micSelect"></select></label>
+              <label>Speaker <select id="speakerSelect"></select></label>
+              <label class="check" id="blurRow"><input type="checkbox" id="blurToggle"> Blur my background</label>
+              <label class="check"><input type="checkbox" id="mirrorToggle" checked> Mirror my video</label>
+              <small class="hint" id="settingsHint"></small>
+            </div>
+          </aside>
         </div>
 
-        <div class="controls">
+        <!-- Control bar -->
+        <footer class="controls">
+          <div class="controls-group">
+            <button type="button" class="ctl" id="startAudio" data-feature="audio"><span class="ico">🎤</span><span>Join audio</span></button>
+            <button type="button" class="ctl" id="muteAudio" hidden><span class="ico">🎤</span><span>Mute</span></button>
+            <button type="button" class="ctl off" id="unmuteAudio" hidden><span class="ico">🔇</span><span>Unmute</span></button>
 
-          <button onClick="startAudio()" class="primary" id="startAudio">Start Audio</button>
-          <button onClick="muteAudio()" class="primary" id="muteAudio">Mute</button>
-          <button onClick="unmuteAudio()" class="primary" id="unmuteAudio">Unmute</button>
+            <button type="button" class="ctl off" id="startVideo" data-feature="video"><span class="ico">📷</span><span>Start video</span></button>
+            <button type="button" class="ctl" id="stopVideo" hidden><span class="ico">📷</span><span>Stop video</span></button>
+          </div>
 
-          <select id="viewMode" onchange="setView(this.value)">
-            <option value="speaker">🗣 Speaker View</option>
-            <option value="gallery">▦ Gallery View</option>
-          </select>
+          <div class="controls-group">
+            <button type="button" class="ctl" id="startShare" data-feature="share"><span class="ico">🖥</span><span>Share</span></button>
+            <button type="button" class="ctl active" id="stopShare" hidden><span class="ico">🛑</span><span>Stop share</span></button>
 
-          <button onClick="startVideo()" class="primary" id="startVideo">Start Video</button>
-          <button onClick="stopVideo()" class="primary" id="stopVideo">Stop Video</button>
+            <button type="button" class="ctl" id="chatButton" data-feature="chat"><span class="ico">💬</span><span>Chat</span><b class="badge" id="chatBadge" hidden></b></button>
+            <button type="button" class="ctl" id="usersButton" data-feature="users"><span class="ico">👥</span><span>People</span></button>
+            <button type="button" class="ctl" id="settingsButton" data-feature="settings"><span class="ico">⚙️</span><span>Settings</span></button>
 
-          <button onClick="startRecording()" class="record" id="startRecording">⏺ Record</button>
-          <button onClick="pauseRecording()" class="primary" id="pauseRecording">⏸ Pause</button>
-          <button onClick="resumeRecording()" class="primary" id="resumeRecording">⏺ Resume</button>
-          <button onClick="stopRecording()" class="leave" id="stopRecording">⏹ Stop Recording</button>
+            <button type="button" class="ctl" id="viewToggle" data-feature="video"><span class="ico">▦</span><span id="viewLabel">Gallery</span></button>
 
-          <button onClick="toggleStats()" class="primary" id="statsButton">📶 Stats</button>
+            <button type="button" class="ctl rec" id="startRecording" hidden><span class="ico">⏺</span><span>Record</span></button>
+            <button type="button" class="ctl" id="pauseRecording" hidden><span class="ico">⏸</span><span>Pause rec</span></button>
+            <button type="button" class="ctl" id="resumeRecording" hidden><span class="ico">⏺</span><span>Resume rec</span></button>
+            <button type="button" class="ctl rec" id="stopRecording" hidden><span class="ico">⏹</span><span>Stop rec</span></button>
 
-          <button onClick="leaveSession()" class="leave" id="leaveSession">Leave Session</button>
-          <button onClick="endSession()" class="end" id="endSession">End Session for All</button>
-        </div>
-      </div>
+            <button type="button" class="ctl" id="statsButton" data-feature="stats"><span class="ico">📶</span><span>Stats</span></button>
+          </div>
+
+          <div class="controls-group">
+            <button type="button" class="leave" id="leaveSession">Leave</button>
+            <button type="button" class="end" id="endSession" hidden>End for all</button>
+          </div>
+        </footer>
+
+        <div id="toast" role="status"></div>
+      </section>
     </main>
 
     <script src="https://source.zoom.us/videosdk/zoom-video-2.5.0.min.js"></script>
-    <script type="text/javascript" src="scripts.js"></script>
+    <script src="jwt.js"></script>
+    <script src="scripts.js"></script>
   </body>
 </html>
-
-
-      
