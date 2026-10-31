@@ -25,13 +25,17 @@ After joining, the decoded token payload is shown on the join screen (with a Cop
 - Participants — host can mute, make host, or remove
 - Settings — camera / mic / speaker switching, background blur, mirror
 - Cloud recording with per-user recording consent prompt (host/manager)
+- Live captions (CC) on screen, with caption size and "original + translation" options
+- Live transcript panel with Download .txt; late joiners load the transcript history
+- Live translation: pick the language you speak and the language to translate captions into (35 languages; available pairs come from the account)
+- Host can turn captions off for everyone
 - Network quality indicator, per-tile quality borders, QoS stats overlay
 - Leave, or end for all (host)
 - Copy invite link (session name + passcode only — never credentials). Guests must sign with the same Video SDK key to land in the same session.
 
 ## Running it
 
-It's static: `index.html`, `styles.css`, `scripts.js`, `jwt.js`.
+It's static: `index.html`, `styles.css`, `scripts.js`, `jwt.js`, `captions.js`.
 
 - **GitHub Pages**: push and enable Pages for the repo.
 - **Locally**: `npx serve .` or `python3 -m http.server`, then open `http://localhost:…`.
@@ -43,4 +47,5 @@ Web Crypto requires a secure context, so use `https://` or `http://localhost` �
 ## Troubleshooting
 
 - **Invalid signature**: make sure these are *Video SDK* credentials (not Meeting SDK / OAuth), the secret matches the key, and your clock is right.
+- **Captions don't start**: live transcription must be enabled for the Video SDK account that signs the token, and translation is a separate add-on. The Transcript panel says which one is off.
 - **Recording buttons missing**: you must be host/manager, the account must have cloud recording, and the Recording feature must be ticked. Run `recordingDiagnostics()` in the console.

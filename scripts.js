@@ -315,6 +315,7 @@ function enterSession(sessionName) {
   refreshUsers()
   checkExistingShare()
   if (features.has('settings')) populateDevices()
+  if (features.has('captions')) captionsOnJoin()
 
   const diag = recordingDiagnostics()
   if (features.has('recording') && diag.isHost && diag.canStartRecording === false) {
@@ -380,6 +381,7 @@ function resetToLanding(message) {
   hideConsentPrompt()
   updateRecordingUI('Stopped')
   closePanel()
+  captionsReset()
   $('#chat-list').innerHTML = ''
   unreadChats = 0
   updateChatBadge()
@@ -713,7 +715,8 @@ function togglePanel(name) {
   show('#side-panel', true)
   document.querySelectorAll('#panelTabs button').forEach((b) => b.classList.toggle('active', b.dataset.panel === name))
   document.querySelectorAll('.panel').forEach((p) => { p.hidden = p.dataset.panel !== name })
-  ;['chat', 'users', 'settings'].forEach((n) => $('#' + n + 'Button').classList.toggle('active', n === name))
+  ;['chat', 'users', 'settings', 'captions'].forEach((n) => $('#' + n + 'Button').classList.toggle('active', n === name))
+  if (name === 'captions') captionsPanelOpened()
   if (name === 'chat') {
     unreadChats = 0
     updateChatBadge()
@@ -727,7 +730,7 @@ function togglePanel(name) {
 function closePanel() {
   openPanel = null
   show('#side-panel', false)
-  ;['chat', 'users', 'settings'].forEach((n) => $('#' + n + 'Button').classList.remove('active'))
+  ;['chat', 'users', 'settings', 'captions'].forEach((n) => $('#' + n + 'Button').classList.remove('active'))
 }
 
 // ---------- Chat ----------
@@ -1173,6 +1176,7 @@ zmClient.on('user-removed', (payload) => {
 // Host can change hands, people mute/unmute, etc.
 zmClient.on('user-updated', () => {
   if (!zmStream) return
+  if (features.has('captions')) updateCaptionHostControls()
   updateRecordingUI()
   updateHostUI()
   syncMyAudioButtons()

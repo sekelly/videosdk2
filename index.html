@@ -103,6 +103,7 @@
                   <label><input type="checkbox" value="users" checked><span>Participants</span></label>
                   <label><input type="checkbox" value="settings" checked><span>Settings</span></label>
                   <label><input type="checkbox" value="recording" checked><span>Recording</span></label>
+                  <label><input type="checkbox" value="captions" checked><span>Captions &amp; translation</span></label>
                   <label><input type="checkbox" value="stats" checked><span>Stats</span></label>
                 </div>
               </fieldset>
@@ -164,6 +165,7 @@
               <h3 id="stage-message">Waiting for video…</h3>
               <video-player-container id="video-container"></video-player-container>
             </div>
+            <div id="caption-overlay" aria-live="polite" hidden></div>
             <div id="stats-panel" hidden><button type="button" class="ghost small" id="stats-close">✕</button><pre id="stats-body">Waiting for data…</pre></div>
           </div>
 
@@ -172,8 +174,9 @@
             <div class="panel-head">
               <div class="segmented" id="panelTabs">
                 <button type="button" data-panel="chat">Chat</button>
-                <button type="button" data-panel="users">Participants</button>
+                <button type="button" data-panel="users">People</button>
                 <button type="button" data-panel="settings">Settings</button>
+                <button type="button" data-panel="captions">Transcript</button>
               </div>
               <button type="button" class="ghost small" id="panelClose" aria-label="Close panel">✕</button>
             </div>
@@ -201,6 +204,39 @@
               <label class="check"><input type="checkbox" id="mirrorToggle" checked> Mirror my video</label>
               <small class="hint" id="settingsHint"></small>
             </div>
+
+            <div class="panel" data-panel="captions" hidden>
+              <div class="caption-settings">
+                <label>I'm speaking
+                  <select id="speakingLanguage"></select>
+                </label>
+                <label>Translate captions to
+                  <select id="translationLanguage"></select>
+                </label>
+                <div class="row">
+                  <label>Caption size
+                    <select id="captionSize">
+                      <option value="small">Small</option>
+                      <option value="medium" selected>Medium</option>
+                      <option value="large">Large</option>
+                    </select>
+                  </label>
+                  <label>Show
+                    <select id="captionShow">
+                      <option value="translated">Translation only</option>
+                      <option value="both">Original + translation</option>
+                    </select>
+                  </label>
+                </div>
+                <label class="check" id="hostCaptionRow" hidden><input type="checkbox" id="hostDisableCaptions"> Turn off captions for everyone (host)</label>
+                <small class="hint" id="captionHint"></small>
+              </div>
+              <div class="transcript-head">
+                <strong>Transcript</strong>
+                <button type="button" class="ghost small" id="downloadTranscript">Download .txt</button>
+              </div>
+              <ol id="transcript-list"></ol>
+            </div>
           </aside>
         </div>
 
@@ -222,6 +258,8 @@
             <button type="button" class="ctl" id="chatButton" data-feature="chat"><span class="ico">💬</span><span>Chat</span><b class="badge" id="chatBadge" hidden></b></button>
             <button type="button" class="ctl" id="usersButton" data-feature="users"><span class="ico">👥</span><span>People</span></button>
             <button type="button" class="ctl" id="settingsButton" data-feature="settings"><span class="ico">⚙️</span><span>Settings</span></button>
+            <button type="button" class="ctl" id="ccButton" data-feature="captions" aria-pressed="false"><span class="ico cc">CC</span><span>Captions</span></button>
+            <button type="button" class="ctl" id="captionsButton" data-feature="captions"><span class="ico">📝</span><span>Transcript</span></button>
 
             <button type="button" class="ctl" id="viewToggle" data-feature="video"><span class="ico">▦</span><span id="viewLabel">Gallery</span></button>
 
@@ -246,5 +284,6 @@
     <script src="https://source.zoom.us/videosdk/zoom-video-2.5.0.min.js"></script>
     <script src="jwt.js"></script>
     <script src="scripts.js"></script>
+    <script src="captions.js"></script>
   </body>
 </html>
